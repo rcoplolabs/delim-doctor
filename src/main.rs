@@ -37,8 +37,11 @@ fn parse_workspace_root() -> anyhow::Result<PathBuf> {
         i += 1;
     }
 
-    let root =
-        workspace_root.ok_or_else(|| anyhow::anyhow!("--workspace-root <path> is required"))?;
+    let root = match workspace_root {
+        Some(r) => r,
+        None => std::env::current_dir()
+            .map_err(|e| anyhow::anyhow!("no --workspace-root given and cannot determine cwd: {e}"))?,
+    };
 
     if !root.exists() {
         anyhow::bail!("workspace root does not exist: {}", root.display());

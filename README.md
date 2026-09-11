@@ -10,42 +10,64 @@ It does not do full syntax parsing (that is rust-analyzer's job). It does one th
 - Locates each problem by line and column, with a context snippet.
 - Skips strings and comments so delimiters inside them are ignored.
 - Optional conservative fixing: deletes stray closers and appends missing closers at end-of-file; never guesses where the insertion point is ambiguous.
-- Confines every file access to `--workspace-root`.
+- Confines every file access to `--workspace-root` (defaults to cwd).
 
 ## Installation
+
+### npm (recommended)
+
+```sh
+npm install -g delim-doctor
+```
+
+### From source
 
 Requires a recent stable Rust toolchain (edition 2024).
 
 ```sh
-cargo build --release
+cargo install delim-doctor
 ```
-
-The binary is produced at `target/release/delim-doctor`.
 
 ## Usage
 
-The binary is a stdio MCP server. It requires `--workspace-root`; all file access is confined to that directory.
+The binary is a stdio MCP server. When `--workspace-root` is omitted, it defaults to the current working directory. All file access is confined to that directory.
 
 ```sh
-./target/release/delim-doctor --workspace-root /path/to/project
-```
+# scan from current directory
+delim-doctor
 
-Print the version:
+# scan a specific project
+delim-doctor --workspace-root /path/to/project
 
-```sh
-./target/release/delim-doctor --version
+# print version
+delim-doctor --version
 ```
 
 ### MCP client setup
 
-Example for opencode, added to the `mcp` section of `opencode.json`:
+#### opencode
+
+Add to the `mcp` section of `opencode.json`:
 
 ```json
 {
   "mcp": {
     "delim-doctor": {
       "type": "local",
-      "command": ["/absolute/path/to/delim-doctor", "--workspace-root", "/absolute/path/to/project"]
+      "command": ["npx", "-y", "delim-doctor"]
+    }
+  }
+}
+```
+
+#### Claude Desktop / Cursor / other clients
+
+```json
+{
+  "mcpServers": {
+    "delim-doctor": {
+      "command": "npx",
+      "args": ["-y", "delim-doctor"]
     }
   }
 }
@@ -136,8 +158,6 @@ Return structure:
 - `generic`: `//`, `/* */`, `#` line comments, single- and double-quoted strings.
 - Unknown extensions fall back to `generic` without error. Any other `language` value returns `invalid_params`.
 
-Dioxus `rsx!` syntax needs no special handling: `rsx!` is a macro invocation, and a macro body must be a valid token tree, so its brackets are necessarily balanced. Interpolation and escaping (`{}`, `{{}}`) happen inside string tokens, so as long as the lexer skips strings and comments correctly, `rsx!` is covered.
-
 ## Design
 
 Single pass, O(n) time and O(n) stack depth, reporting **all** imbalance points rather than just the first.
@@ -161,8 +181,6 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
-
-Test coverage includes stack logic (closing on an empty stack, mismatch, nesting, stacked errors, UTF-8 columns), the Rust lexer (raw strings, nested block comments, lifetimes, byte strings, BOM), `delim_fix` deletion and EOF insertion, path safety, and `rsx!` fixtures.
 
 ## License
 

@@ -10,17 +10,34 @@ Platform packages are installed through `optionalDependencies`; npm fetches only
 npx delim-doctor --version
 ```
 
-To use it as an MCP server, pass `--workspace-root`:
+To use it as an MCP server, add to your MCP client config:
+
+### opencode
 
 ```json
 {
   "mcp": {
     "delim-doctor": {
       "type": "local",
-      "command": ["npx", "delim-doctor", "--workspace-root", "/path/to/project"]
+      "command": ["npx", "-y", "delim-doctor"]
     }
   }
 }
 ```
 
-See the source repository README for full documentation.
+### Claude Desktop / Cursor / other clients
+
+```json
+{
+  "mcpServers": {
+    "delim-doctor": {
+      "command": "npx",
+      "args": ["-y", "delim-doctor"]
+    }
+  }
+}
+```
+
+`--workspace-root` is optional — defaults to the current working directory. MCP clients typically set CWD to the project root when spawning the server.
+
+See the [source repository](https://github.com/rcoplolabs/delim-doctor) for full documentation.
