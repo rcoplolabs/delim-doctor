@@ -1,0 +1,19 @@
+{
+  "name": "@rcoplolabs/win32-x64",
+  "version": "0.1.0",
+  "description": "delim-doctor binary for win32 x64.",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/delim-doctor.exe"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rcoplolabs/delim-doctor.git",
+    "directory": "npm/platforms/win32-x64"
+  }
+}

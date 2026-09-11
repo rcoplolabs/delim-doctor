@@ -1,0 +1,22 @@
+{
+  "name": "@rcoplolabs/linux-arm64-musl",
+  "version": "0.1.0",
+  "description": "delim-doctor binary for Linux arm64 (musl).",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "libc": [
+    "musl"
+  ],
+  "files": [
+    "bin/delim-doctor"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rcoplolabs/delim-doctor.git",
+    "directory": "npm/platforms/linux-arm64-musl"
+  }
+}

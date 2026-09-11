@@ -1,0 +1,22 @@
+{
+  "name": "@rcoplolabs/linux-x64-gnu",
+  "version": "0.1.0",
+  "description": "delim-doctor binary for Linux x64 (glibc).",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "libc": [
+    "glibc"
+  ],
+  "files": [
+    "bin/delim-doctor"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rcoplolabs/delim-doctor.git",
+    "directory": "npm/platforms/linux-x64-gnu"
+  }
+}

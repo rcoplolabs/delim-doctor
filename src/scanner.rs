@@ -1,0 +1,458 @@
+use crate::lexer::Lexer;
+use crate::lexer::generic::GenericLexer;
+use crate::lexer::rust::RustLexer;
+use crate::report::{DelimProblem, ProblemKind};
+
+struct OpenDelim {
+    ch: char,
+    line: usize,
+    col: usize,
+    byte_offset: usize,
+    depth_at: usize,
+}
+
+fn matching_close(open: char) -> Option<char> {
+    match open {
+        '(' => Some(')'),
+        '[' => Some(']'),
+        '{' => Some('}'),
+        _ => None,
+    }
+}
+
+fn scan_inner<L: Lexer>(lexer: &mut L, lines: &[&str], context_lines: usize) -> Vec<DelimProblem> {
+    let mut stack: Vec<OpenDelim> = Vec::new();
+    let mut problems: Vec<DelimProblem> = Vec::new();
+
+    while let Some(ev) = lexer.next_delim() {
+        if matches!(ev.ch, '(' | '[' | '{') {
+            let depth_at = stack.len() + 1;
+            stack.push(OpenDelim {
+                ch: ev.ch,
+                line: ev.line,
+                col: ev.col,
+                byte_offset: ev.byte_offset,
+                depth_at,
+            });
+        } else {
+            process_close(
+                ev.ch,
+                ev.line,
+                ev.col,
+                ev.byte_offset,
+                &mut stack,
+                &mut problems,
+            );
+        }
+    }
+
+    for open in stack.iter().rev() {
+        problems.push(DelimProblem {
+            kind: ProblemKind::MissingClose,
+            ch: open.ch,
+            line: open.line,
+            col: open.col,
+            byte_offset: open.byte_offset,
+            expected: matching_close(open.ch),
+            snippet: String::new(),
+            depth_at: open.depth_at,
+            at_eof: true,
+        });
+    }
+
+    for p in &mut problems {
+        p.snippet = generate_snippet(lines, p.line, p.col, context_lines, p.kind, p.expected);
+    }
+
+    problems
+}
+
+pub fn scan(src: &str, context_lines: usize, language: &str) -> Vec<DelimProblem> {
+    let lines: Vec<&str> = src.lines().collect();
+    match language {
+        "rust" => {
+            let mut lexer = RustLexer::new(src);
+            scan_inner(&mut lexer, &lines, context_lines)
+        }
+        _ => {
+            let mut lexer = GenericLexer::new(src);
+            scan_inner(&mut lexer, &lines, context_lines)
+        }
+    }
+}
+
+fn process_close(
+    close_ch: char,
+    line: usize,
+    col: usize,
+    byte_offset: usize,
+    stack: &mut Vec<OpenDelim>,
+    problems: &mut Vec<DelimProblem>,
+) {
+    if stack.is_empty() {
+        problems.push(DelimProblem {
+            kind: ProblemKind::UnexpectedClose,
+            ch: close_ch,
+            line,
+            col,
+            byte_offset,
+            expected: Some(close_ch),
+            snippet: String::new(),
+            depth_at: 0,
+            at_eof: false,
+        });
+        return;
+    }
+
+    if matching_close(stack.last().unwrap().ch) == Some(close_ch) {
+        stack.pop();
+        return;
+    }
+
+    let match_idx = stack
+        .iter()
+        .rposition(|o| matching_close(o.ch) == Some(close_ch));
+
+    match match_idx {
+        Some(idx) => {
+            while stack.len() > idx + 1 {
+                let open = stack.pop().unwrap();
+                problems.push(DelimProblem {
+                    kind: ProblemKind::MissingClose,
+                    ch: open.ch,
+                    line: open.line,
+                    col: open.col,
+                    byte_offset: open.byte_offset,
+                    expected: matching_close(open.ch),
+                    snippet: String::new(),
+                    depth_at: open.depth_at,
+                    at_eof: false,
+                });
+            }
+            stack.pop();
+        }
+        None => {
+            problems.push(DelimProblem {
+                kind: ProblemKind::UnexpectedClose,
+                ch: close_ch,
+                line,
+                col,
+                byte_offset,
+                expected: Some(close_ch),
+                snippet: String::new(),
+                depth_at: stack.len(),
+                at_eof: false,
+            });
+        }
+    }
+}
+
+fn generate_snippet(
+    lines: &[&str],
+    problem_line: usize,
+    problem_col: usize,
+    context_lines: usize,
+    kind: ProblemKind,
+    expected: Option<char>,
+) -> String {
+    let start = problem_line.saturating_sub(context_lines).max(1);
+    let end = (problem_line + context_lines).min(lines.len());
+
+    let width = format!("{}", end).len().max(3);
+    let mut result = Vec::new();
+
+    for ln in start..=end {
+        let idx = ln - 1;
+        let content = lines.get(idx).copied().unwrap_or("");
+        result.push(format!("{:>w$} | {}", ln, content, w = width));
+
+        if ln == problem_line {
+            let col_indent = " ".repeat(problem_col.saturating_sub(1));
+            let desc = match (kind, expected) {
+                (ProblemKind::MissingClose, Some(c)) => format!("missing {}", c),
+                (ProblemKind::UnexpectedClose, Some(c)) => format!("unexpected {}", c),
+                _ => String::new(),
+            };
+            result.push(format!("{:>w$} | {}^ {}", "", col_indent, desc, w = width));
+        }
+    }
+
+    result.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::report::ProblemKind;
+
+    fn scan_src(src: &str) -> Vec<DelimProblem> {
+        scan(src, 0, "generic")
+    }
+
+    fn scan_rust(src: &str) -> Vec<DelimProblem> {
+        scan(src, 0, "rust")
+    }
+
+    #[test]
+    fn test_balanced_no_problems() {
+        let src = "fn main() {\n    let x = [1, 2, 3];\n}\n";
+        let problems = scan_src(src);
+        assert!(
+            problems.is_empty(),
+            "expected no problems, got {:?}",
+            problems
+        );
+    }
+
+    #[test]
+    fn test_missing_close_brace() {
+        let src = "fn foo() {\n    let x = 1;\n";
+        let problems = scan_src(src);
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0].kind, ProblemKind::MissingClose);
+        assert_eq!(problems[0].ch, '{');
+        assert_eq!(problems[0].line, 1);
+        assert_eq!(problems[0].col, 10);
+        assert_eq!(problems[0].expected, Some('}'));
+        assert_eq!(problems[0].depth_at, 1);
+    }
+
+    #[test]
+    fn test_unexpected_close_empty_stack() {
+        let src = "extra )\n";
+        let problems = scan_src(src);
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0].kind, ProblemKind::UnexpectedClose);
+        assert_eq!(problems[0].ch, ')');
+        assert_eq!(problems[0].line, 1);
+        assert_eq!(problems[0].col, 7);
+        assert_eq!(problems[0].depth_at, 0);
+    }
+
+    #[test]
+    fn test_mismatch_crossed_opens() {
+        let src = "{ [ }";
+        let problems = scan_src(src);
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0].kind, ProblemKind::MissingClose);
+        assert_eq!(problems[0].ch, '[');
+        assert_eq!(problems[0].expected, Some(']'));
+    }
+
+    #[test]
+    fn test_mismatch_no_matching_open() {
+        let src = "( ]";
+        let problems = scan_src(src);
+        assert_eq!(problems.len(), 2);
+        assert_eq!(problems[0].kind, ProblemKind::UnexpectedClose);
+        assert_eq!(problems[0].ch, ']');
+        assert_eq!(problems[0].depth_at, 1);
+        assert_eq!(problems[1].kind, ProblemKind::MissingClose);
+        assert_eq!(problems[1].ch, '(');
+    }
+
+    #[test]
+    fn test_nested_depth_at() {
+        let src = "{ [ (";
+        let problems = scan_src(src);
+        assert_eq!(problems.len(), 3);
+        assert_eq!(problems[0].ch, '(');
+        assert_eq!(problems[0].depth_at, 3);
+        assert_eq!(problems[1].ch, '[');
+        assert_eq!(problems[1].depth_at, 2);
+        assert_eq!(problems[2].ch, '{');
+        assert_eq!(problems[2].depth_at, 1);
+    }
+
+    #[test]
+    fn test_multiple_errors() {
+        let src = "{ [ } )";
+        let problems = scan_src(src);
+        assert_eq!(problems.len(), 2);
+        assert_eq!(problems[0].kind, ProblemKind::MissingClose);
+        assert_eq!(problems[0].ch, '[');
+        assert_eq!(problems[1].kind, ProblemKind::UnexpectedClose);
+        assert_eq!(problems[1].ch, ')');
+    }
+
+    #[test]
+    fn test_brackets_in_string_skipped() {
+        let src = "let s = \"(not a delim)\";\n";
+        let problems = scan_src(src);
+        assert!(
+            problems.is_empty(),
+            "expected no problems, got {:?}",
+            problems
+        );
+    }
+
+    #[test]
+    fn test_brackets_in_line_comment_skipped() {
+        let src = "// { not a delim\nfn main() {}\n";
+        let problems = scan_src(src);
+        assert!(
+            problems.is_empty(),
+            "expected no problems, got {:?}",
+            problems
+        );
+    }
+
+    #[test]
+    fn test_brackets_in_block_comment_skipped() {
+        let src = "/* { [ ( */\nfn main() {}\n";
+        let problems = scan_src(src);
+        assert!(
+            problems.is_empty(),
+            "expected no problems, got {:?}",
+            problems
+        );
+    }
+
+    #[test]
+    fn test_brackets_in_hash_comment_skipped() {
+        let src = "# { not a delim }\nx = 1\n";
+        let problems = scan_src(src);
+        assert!(
+            problems.is_empty(),
+            "expected no problems, got {:?}",
+            problems
+        );
+    }
+
+    #[test]
+    fn test_single_quote_string_skipped() {
+        let src = "let c = '(';\n";
+        let problems = scan_src(src);
+        assert!(
+            problems.is_empty(),
+            "expected no problems, got {:?}",
+            problems
+        );
+    }
+
+    #[test]
+    fn test_escaped_quote_in_string() {
+        let src = "let s = \"it's \\\"fine\\\" {}\";\n";
+        let problems = scan_src(src);
+        assert!(
+            problems.is_empty(),
+            "expected no problems, got {:?}",
+            problems
+        );
+    }
+
+    #[test]
+    fn test_utf8_column_tracking() {
+        let src = "\u{00e5}{";
+        let problems = scan_src(src);
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0].ch, '{');
+        assert_eq!(problems[0].line, 1);
+        assert_eq!(problems[0].col, 2);
+    }
+
+    #[test]
+    fn test_multiline_string() {
+        let src = "let s = \"hello\nworld\";\n{";
+        let problems = scan_src(src);
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0].ch, '{');
+        assert_eq!(problems[0].line, 3);
+    }
+
+    #[test]
+    fn test_snippet_generation() {
+        let src = "line1\nline2\nfn foo() {\n    let x = 1;\nline5\n";
+        let problems = scan(src, 1, "generic");
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].snippet.contains("fn foo()"));
+        assert!(problems[0].snippet.contains("^ missing }"));
+    }
+
+    #[test]
+    fn test_pass_criteria_missing_brace() {
+        let src = "fn outer() {\n    fn inner() {\n        let x = 1;\n    // missing close for inner\n}\n";
+        let problems = scan_src(src);
+        assert!(!problems.is_empty());
+        let outer = problems.iter().find(|p| p.line == 1);
+        assert!(
+            outer.is_some(),
+            "should find MissingClose at line 1 (outer's {{)"
+        );
+        assert_eq!(outer.unwrap().ch, '{');
+        assert_eq!(outer.unwrap().expected, Some('}'));
+    }
+
+    #[test]
+    fn test_rust_raw_string_brackets_skipped() {
+        let src = "let s = r#\"{[()]}\"#;\n";
+        let problems = scan_rust(src);
+        assert!(problems.is_empty(), "got {:?}", problems);
+    }
+
+    #[test]
+    fn test_rust_raw_string_no_hash() {
+        let src = "let s = r\"()\";\n";
+        let problems = scan_rust(src);
+        assert!(problems.is_empty(), "got {:?}", problems);
+    }
+
+    #[test]
+    fn test_rust_nested_block_comment() {
+        let src = "/* { /* } */ { */ fn main() {}\n";
+        let problems = scan_rust(src);
+        assert!(problems.is_empty(), "got {:?}", problems);
+    }
+
+    #[test]
+    fn test_rust_lifetime_not_char() {
+        let src = "fn foo<'a>(x: &'a str) {}\n";
+        let problems = scan_rust(src);
+        assert!(problems.is_empty(), "got {:?}", problems);
+    }
+
+    #[test]
+    fn test_rust_static_lifetime() {
+        let src = "let s: &'static str = \"hello\";\n";
+        let problems = scan_rust(src);
+        assert!(problems.is_empty(), "got {:?}", problems);
+    }
+
+    #[test]
+    fn test_rust_char_literal_skipped() {
+        let src = "let c = '(';\nlet d = '\\n';\nlet e = 'a';\n";
+        let problems = scan_rust(src);
+        assert!(problems.is_empty(), "got {:?}", problems);
+    }
+
+    #[test]
+    fn test_rust_bom_skipped() {
+        let src = "\u{FEFF}fn main() {}\n";
+        let problems = scan_rust(src);
+        assert!(problems.is_empty(), "got {:?}", problems);
+    }
+
+    #[test]
+    fn test_rust_byte_string_skipped() {
+        let src = "let b = b\"{}\";\n";
+        let problems = scan_rust(src);
+        assert!(problems.is_empty(), "got {:?}", problems);
+    }
+
+    #[test]
+    fn test_rust_byte_raw_string() {
+        let src = "let s = br#\"{}\"#;\n";
+        let problems = scan_rust(src);
+        assert!(problems.is_empty(), "got {:?}", problems);
+    }
+
+    #[test]
+    fn test_rust_missing_brace_with_lifetimes() {
+        let src = "fn foo<'a>(x: &'a str) {\n    let y = 1;\n";
+        let problems = scan_rust(src);
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0].kind, ProblemKind::MissingClose);
+        assert_eq!(problems[0].ch, '{');
+        assert_eq!(problems[0].line, 1);
+    }
+}

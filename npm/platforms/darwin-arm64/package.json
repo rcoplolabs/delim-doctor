@@ -1,0 +1,19 @@
+{
+  "name": "@rcoplolabs/darwin-arm64",
+  "version": "0.1.0",
+  "description": "delim-doctor binary for macOS arm64.",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/delim-doctor"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rcoplolabs/delim-doctor.git",
+    "directory": "npm/platforms/darwin-arm64"
+  }
+}
