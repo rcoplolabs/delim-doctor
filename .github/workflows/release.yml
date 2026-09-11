@@ -1,22 +1,27 @@
 name: Release
 
-# Combined workflow: auto-tag + build + GitHub Release + npm publish
+# Continuous Delivery — builds 8 platforms, creates GitHub Release, publishes to npm.
 #
 # Triggers:
-#   1. Push to main → auto-tag detects Cargo.toml version → creates tag
-#      → build → GitHub Release → npm publish (all in one run)
-#   2. Manual tag push (v*) → skip auto-tag → build → release → publish
-#   3. workflow_dispatch → build only (for testing, no release/publish)
+#   1. workflow_dispatch (manual) — admin clicks "Run workflow" on Actions page.
+#      Optional input: tag name. If empty, reads version from Cargo.toml.
+#   2. push: tags ["v*"] — manual `git tag v0.2.0 && git push origin v0.2.0`
+#   3. schedule (weekly Monday 09:00 UTC) — auto-releases if Cargo.toml version
+#      differs from latest tag. If same, skips silently.
 #
-# NOTE: GitHub Actions does NOT trigger workflows from tags pushed by
-# GITHUB_TOKEN. Combining auto-tag + release into one workflow avoids
-# this limitation entirely.
+# CI (fmt + clippy + test) runs separately in ci.yml on every PR and push to main.
+# This workflow only runs on explicit release triggers.
 
 on:
-  push:
-    branches: [main, master]
-    tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag name (e.g. v0.3.0). Leave empty to use Cargo.toml version."
+        required: false
+  push:
+    tags: ["v*"]
+  schedule:
+    - cron: "0 9 * * 1"
 
 permissions:
   contents: write
@@ -25,54 +30,72 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ── Auto-tag: on branch push, create tag if version changed ──────────────
-  auto-tag:
-    name: Auto-tag
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
+  # ── Resolve tag: determine which tag to release, create if missing ────────
+  resolve-tag:
+    name: Resolve tag
     runs-on: ubuntu-latest
     outputs:
-      should_release: ${{ steps.check.outputs.should_release }}
-      tag: ${{ steps.version.outputs.tag }}
-      version: ${{ steps.version.outputs.version }}
+      should_run: ${{ steps.resolve.outputs.should_run }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Extract version from Cargo.toml
-        id: version
+      - name: Resolve tag
+        id: resolve
         run: |
-          VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
-          if [ -z "$VERSION" ]; then
-            echo "Could not extract version from Cargo.toml"
-            exit 1
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Check if tag already exists
-        id: check
-        run: |
-          if git rev-parse "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-            echo "Tag ${{ steps.version.outputs.tag }} already exists — skipping release"
+          # Priority: input > tag push (GITHUB_REF_NAME) > Cargo.toml
+          INPUT_TAG="${{ inputs.tag }}"
+          if [ -n "$INPUT_TAG" ] && [ "$INPUT_TAG" != "" ]; then
+            TAG="$INPUT_TAG"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME}"
           else
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+            if [ -z "$VERSION" ]; then
+              echo "Could not extract version from Cargo.toml"
+              exit 1
+            fi
+            TAG="v${VERSION}"
           fi
 
-      - name: Create and push tag
-        if: steps.check.outputs.should_release == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.version }}"
-          git push origin "${{ steps.version.outputs.tag }}"
+          # Ensure v prefix
+          TAG="${TAG#v}"
+          TAG="v${TAG}"
+          VERSION="${TAG#v}"
 
-  # ── Build: runs if auto-tag created a tag, or on manual tag push ──────────
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          # On schedule: skip if tag already exists (no new version to release)
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+              echo "Tag $TAG already exists — nothing to release"
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+
+          # Create tag if it doesn't exist (workflow_dispatch path)
+          if ! git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Creating tag $TAG"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag "$TAG" -m "Release $VERSION"
+            git push origin "$TAG"
+          else
+            echo "Tag $TAG already exists — will release"
+          fi
+
+  # ── Build: 8-platform parallel build + test ──────────────────────────────
   build:
     name: build ${{ matrix.pkg }}
-    needs: auto-tag
-    if: always() && (needs.auto-tag.result == 'skipped' || needs.auto-tag.outputs.should_release == 'true')
+    needs: resolve-tag
+    if: needs.resolve-tag.outputs.should_run == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -177,20 +200,10 @@ jobs:
   github-release:
     name: GitHub Release
     needs: build
-    if: always() && needs.build.result == 'success' && (needs.auto-tag.outputs.should_release == 'true' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Determine tag
-        id: tag
-        run: |
-          TAG="${{ needs.auto-tag.outputs.tag }}"
-          if [ -z "$TAG" ] || [ "$TAG" = "" ]; then
-            TAG="${GITHUB_REF_NAME}"
-          fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
       - name: Download all binary artifacts
         uses: actions/download-artifact@v8
         with:
@@ -205,7 +218,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ steps.tag.outputs.tag }}"
+          TAG="${{ needs.resolve-tag.outputs.tag }}"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists — uploading assets"
             gh release upload "$TAG" binaries/* --clobber
@@ -221,22 +234,12 @@ jobs:
   publish:
     name: npm publish
     needs: build
-    if: always() && needs.build.result == 'success' && (needs.auto-tag.outputs.should_release == 'true' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v7
-
-      - name: Determine tag
-        id: tag
-        run: |
-          TAG="${{ needs.auto-tag.outputs.tag }}"
-          if [ -z "$TAG" ] || [ "$TAG" = "" ]; then
-            TAG="${GITHUB_REF_NAME}"
-          fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v7
         with:
@@ -261,10 +264,9 @@ jobs:
         shell: bash
         run: |
           version=$(node -p "require('./npm/delim-doctor/package.json').version")
-          TAG="${{ steps.tag.outputs.tag }}"
-          tag="${TAG#v}"
-          if [ "$version" != "$tag" ]; then
-            echo "tag $TAG does not match package version $version"
+          TAG="${{ needs.resolve-tag.outputs.version }}"
+          if [ "$version" != "$TAG" ]; then
+            echo "tag version $TAG does not match package version $version"
             exit 1
           fi
 
