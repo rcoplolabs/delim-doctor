@@ -14,6 +14,7 @@ pub fn backup_path(path: &Path) -> PathBuf {
 ///
 /// On Windows, `rename` cannot overwrite an existing file, so it falls back to
 /// remove-then-rename. The backup taken beforehand preserves the original.
+/// If the final rename still fails, the backup is restored to avoid data loss.
 pub fn write_atomic_with_backup(path: &Path, content: &str) -> std::io::Result<()> {
     let backup = backup_path(path);
     fs::copy(path, &backup)?;
@@ -31,7 +32,16 @@ pub fn write_atomic_with_backup(path: &Path, content: &str) -> std::io::Result<(
         Ok(()) => Ok(()),
         Err(_) => {
             fs::remove_file(path)?;
-            fs::rename(&tmp, path)
+            match fs::rename(&tmp, path) {
+                Ok(()) => Ok(()),
+                Err(_) => {
+                    // Both rename attempts failed. Restore original from backup.
+                    fs::copy(&backup, path)?;
+                    Err(std::io::Error::other(
+                        "atomic write failed; original restored from backup",
+                    ))
+                }
+            }
         }
     }
 }

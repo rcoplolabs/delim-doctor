@@ -1,8 +1,4 @@
-mod fixer;
-mod lexer;
-mod path_guard;
-mod report;
-mod scanner;
+mod scan;
 mod server;
 mod writer;
 
@@ -39,8 +35,9 @@ fn parse_workspace_root() -> anyhow::Result<PathBuf> {
 
     let root = match workspace_root {
         Some(r) => r,
-        None => std::env::current_dir()
-            .map_err(|e| anyhow::anyhow!("no --workspace-root given and cannot determine cwd: {e}"))?,
+        None => std::env::current_dir().map_err(|e| {
+            anyhow::anyhow!("no --workspace-root given and cannot determine cwd: {e}")
+        })?,
     };
 
     if !root.exists() {

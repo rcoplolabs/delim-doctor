@@ -1,7 +1,5 @@
-use crate::lexer::Lexer;
-use crate::lexer::generic::GenericLexer;
-use crate::lexer::rust::RustLexer;
-use crate::report::{DelimProblem, ProblemKind};
+use super::lexer::{Lexer, make_lexer};
+use super::report::{DelimProblem, ProblemKind, generate_snippet};
 
 struct OpenDelim {
     ch: char,
@@ -20,7 +18,11 @@ fn matching_close(open: char) -> Option<char> {
     }
 }
 
-fn scan_inner<L: Lexer>(lexer: &mut L, lines: &[&str], context_lines: usize) -> Vec<DelimProblem> {
+fn scan_inner<'a>(
+    lexer: &mut dyn Lexer<'a>,
+    lines: &[&str],
+    context_lines: usize,
+) -> Vec<DelimProblem> {
     let mut stack: Vec<OpenDelim> = Vec::new();
     let mut problems: Vec<DelimProblem> = Vec::new();
 
@@ -69,16 +71,8 @@ fn scan_inner<L: Lexer>(lexer: &mut L, lines: &[&str], context_lines: usize) -> 
 
 pub fn scan(src: &str, context_lines: usize, language: &str) -> Vec<DelimProblem> {
     let lines: Vec<&str> = src.lines().collect();
-    match language {
-        "rust" => {
-            let mut lexer = RustLexer::new(src);
-            scan_inner(&mut lexer, &lines, context_lines)
-        }
-        _ => {
-            let mut lexer = GenericLexer::new(src);
-            scan_inner(&mut lexer, &lines, context_lines)
-        }
-    }
+    let mut lexer = make_lexer(src, language);
+    scan_inner(&mut *lexer, &lines, context_lines)
 }
 
 fn process_close(
@@ -147,43 +141,10 @@ fn process_close(
     }
 }
 
-fn generate_snippet(
-    lines: &[&str],
-    problem_line: usize,
-    problem_col: usize,
-    context_lines: usize,
-    kind: ProblemKind,
-    expected: Option<char>,
-) -> String {
-    let start = problem_line.saturating_sub(context_lines).max(1);
-    let end = (problem_line + context_lines).min(lines.len());
-
-    let width = format!("{}", end).len().max(3);
-    let mut result = Vec::new();
-
-    for ln in start..=end {
-        let idx = ln - 1;
-        let content = lines.get(idx).copied().unwrap_or("");
-        result.push(format!("{:>w$} | {}", ln, content, w = width));
-
-        if ln == problem_line {
-            let col_indent = " ".repeat(problem_col.saturating_sub(1));
-            let desc = match (kind, expected) {
-                (ProblemKind::MissingClose, Some(c)) => format!("missing {}", c),
-                (ProblemKind::UnexpectedClose, Some(c)) => format!("unexpected {}", c),
-                _ => String::new(),
-            };
-            result.push(format!("{:>w$} | {}^ {}", "", col_indent, desc, w = width));
-        }
-    }
-
-    result.join("\n")
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::report::ProblemKind;
     use super::*;
-    use crate::report::ProblemKind;
 
     fn scan_src(src: &str) -> Vec<DelimProblem> {
         scan(src, 0, "generic")

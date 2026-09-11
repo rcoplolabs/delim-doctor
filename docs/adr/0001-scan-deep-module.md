@@ -1,0 +1,3 @@
+# Scan deep module — collapse tool-handler glue
+
+The five-step pipeline (validate-language → validate-path → read-file → detect-language → scan/fix → report) was duplicated across both MCP tool handlers in server.rs, making the glue the code's center of gravity rather than the domain logic. We deepen this into a single `Scan` module that owns the full flow from path to report, exposing one entry point `Scan::run(path, opts) -> Result<ScanResult, ScanError>`. The previous flat module layout (scanner, path_guard, report, fixer, lexer as siblings) becomes a nested structure under `scan/`, turning the orchestration from invisible duplication into a visible, testable interface. `writer.rs` stays outside — file writing is a boundary concern, not a Scan responsibility.

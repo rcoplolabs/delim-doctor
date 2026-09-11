@@ -82,7 +82,7 @@ Scans a file and reports all delimiter imbalance points.
 | Parameter | Required | Description |
 |---|---|---|
 | `path` | yes | File path, absolute or relative to `--workspace-root` |
-| `language` | no | `rust` or `generic`; defaults to extension-based detection |
+| `language` | no | `rust`, `python`, `javascript`/`js`, `typescript`/`ts`, or `generic`; defaults to extension-based detection |
 | `max_problems` | no | Maximum number of problems to return, default 20 |
 | `context_lines` | no | Context lines around each problem, default 1 |
 | `cursor` | no | `next_cursor` from a previous response, for pagination |
@@ -154,15 +154,52 @@ Return structure:
 
 ## Language support
 
-- `rust`: line comments, block comments (nested), `"..."` strings with escapes, `r"..."` / `r#"..."#` raw strings, `b"..."` / `b'..'`, `br#..`, and the ambiguity between `'a` lifetimes and character literals.
-- `generic`: `//`, `/* */`, `#` line comments, single- and double-quoted strings.
-- Unknown extensions fall back to `generic` without error. Any other `language` value returns `invalid_params`.
+Each named language is a thin lexer layered **on top of `generic`**: it only overrides what differs, and everything else falls back to the generic rules. This keeps every lexer small and predictable.
+
+| `language` | Extensions | Generic base | Overrides | Known limits |
+|---|---|---|---|---|
+| `rust` | `.rs` | yes | Nested block comments; raw strings `r".."` `r#".."#`; byte strings `b".."`/`b'..'`/`br#..`; lifetimes `'a` vs char literals | |
+| `python` | `.py`, `.pyw` | yes | Triple-quoted strings `""".."""` / `'''..'''`; prefixes `r`/`b`/`f`/`u` and combos (`rb`, `br`, `fr`, `rf`) | `${}`-style f-string inner expressions are skipped as string content |
+| `javascript` / `js` | `.js`, `.mjs`, `.cjs`, `.jsx` | yes | Template literals (`` `…` ``) skipped as opaque strings | `${}` expression bodies and regex literals are not distinguished; brackets inside them are reported (regex) or missed (template expr) |
+| `typescript` / `ts` | `.ts`, `.mts`, `.cts`, `.tsx` | yes | Same as `javascript` | Same as `javascript` |
+| `generic` (default) | anything else | — | — | |
+
+`generic` base rules: `//` and `/* */` block comments, `#` line comments, and single- `"..."` / double-quoted `'...'` strings with backslash escapes. Delimiters inside all of these are ignored.
+
+Unknown extensions fall back to `generic` without error. An unrecognized `language` value returns `invalid_params`.
 
 ## Design
 
 Single pass, O(n) time and O(n) stack depth, reporting **all** imbalance points rather than just the first.
 
 When a closing delimiter does not match the top of the stack, the scanner searches downward for the nearest matching open. If found, each open crossed over is reported as `missingClose` and the matching open is popped normally; if not found, the closer is reported as `unexpectedClose`. This deterministic recovery keeps every problem independently locatable and avoids a single mismatch cascading into false positives for the rest of the file.
+
+## Development guide
+
+The scanner is a small dependency chain: `server` -> `scan` (the deep module that orchestrates path validation, reading, language detection, scanning, and reporting) -> `scanner` -> `lexer` -> per-language lexer -> `BaseLexer`. A new language is a ~30-line file plus tests and one edit to `src/scan/lexer/mod.rs` (add the name to `is_valid_language`, the extension to `detect_language`, and the dispatch arm to `make_lexer`).
+
+### Architecture
+
+- `src/scan/lexer/mod.rs` defines `BaseLexer<'a>` (the shared character cursor with line/column tracking) and the `Lexer<'a>` trait.
+- The trait's `next_delim` method contains the **default scan loop**: it peeks one char, consumes it, and dispatches — `//`/`/* */`/`#` comments, `""` strings, `''` strings, backticks, then `()[]{}` delimiters (returned as `DelimEvent`), and finally any remaining char to `try_handle_prefix`.
+- Each overrideable step is a **trait default method** with the generic behavior:
+  - `skip_block_comment` — generic: non-nested. `rust` overrides: nested.
+  - `handle_single_quote` / `handle_double_quote` / `handle_backtick` — generic: `skip_string` with backslash escapes. `python` overrides the quote handlers for triple quotes.
+  - `try_handle_prefix(ch)` — generic: `false`. `rust` overrides for `r`/`b` prefixes; `python` for `r`/`b`/`f`/`u`.
+- Everything not overridden falls back to the generic behavior automatically.
+
+### Adding a language
+
+1. Create `src/scan/lexer/<name>.rs` with a struct holding a `BaseLexer<'a>` plus any language-specific state.
+2. `impl Lexer<'a> for <Name>Lexer<'a>` — implement `base()` (required), and override only the hook methods you need.
+3. In `src/scan/lexer/mod.rs`: add the language name to `is_valid_language`, the extension(s) to `detect_language`, and a dispatch arm in `make_lexer`.
+4. Write unit tests in the lexer file (see `lexer::python::tests` for the pattern).
+5. Document the language (and its known limits) in the table above.
+
+### Conventions
+
+- **Conservative lexing**: when in doubt, skip more rather than less. A string/comment swallowing a delimiter produces a *missed* problem (false negative), which is acceptable; inventing delimiters produces false positives, which is not.
+- If a syntax element is ambiguous without a full parser (e.g. regex literals vs division), keep the generic behavior and document it as a known limit rather than guessing.
 
 ## Security
 
@@ -174,6 +211,8 @@ When a closing delimiter does not match the top of the stack, the scanner search
 
 Issues and pull requests are welcome.
 
+Architecture, conventions, and how to add a new language are described in the [Development guide](#development-guide) above.
+
 Before opening a pull request, make sure the checks pass:
 
 ```sh
@@ -181,6 +220,8 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
+
+Test coverage includes stack logic (closing on an empty stack, mismatch, nesting, stacked errors, UTF-8 columns), the rust/python/javascript lexers, `delim_fix` deletion and EOF insertion, and path safety.
 
 ## License
 

@@ -1,10 +1,10 @@
 #![allow(dead_code)]
 
-#[path = "../src/lexer/mod.rs"]
+#[path = "../src/scan/lexer/mod.rs"]
 mod lexer;
-#[path = "../src/report.rs"]
+#[path = "../src/scan/report.rs"]
 mod report;
-#[path = "../src/scanner.rs"]
+#[path = "../src/scan/scanner.rs"]
 mod scanner;
 
 use std::fs;
