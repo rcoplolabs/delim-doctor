@@ -168,27 +168,13 @@ jobs:
         if: ${{ !matrix.cross && !matrix.skip_test }}
         run: cargo test --target ${{ matrix.target }}
 
-      - name: Stage binary
-        shell: bash
-        run: |
-          mkdir -p "npm/platforms/${{ matrix.pkg }}/bin"
-          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" \
-             "npm/platforms/${{ matrix.pkg }}/bin/${{ matrix.bin }}"
-
-      - name: Stage raw binary for GitHub Release
+      - name: Stage and upload raw binary
         shell: bash
         run: |
           mkdir -p release
           BIN="delim-doctor-${{ matrix.target }}"
           if [[ "${{ matrix.bin }}" == *.exe ]]; then BIN="${BIN}.exe"; fi
           cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "release/${BIN}"
-
-      - name: Upload platform package
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.pkg }}
-          path: npm/platforms/${{ matrix.pkg }}
-          if-no-files-found: error
 
       - name: Upload raw binary
         uses: actions/upload-artifact@v7
@@ -249,13 +235,40 @@ jobs:
       - name: Upgrade npm for trusted publishing
         run: npm install -g npm@^11.5.1
 
-      - name: Clear platform packages
-        run: rm -rf npm/platforms
-
-      - name: Download platform packages
+      - name: Download raw binaries
         uses: actions/download-artifact@v8
         with:
-          path: npm/platforms
+          pattern: binary-*
+          path: binaries
+          merge-multiple: true
+
+      - name: Reconstruct npm platform packages
+        shell: bash
+        run: |
+          # Map target → pkg/bin, reconstruct npm/platforms/{pkg}/bin/{bin}
+          declare -A PKG=(
+            [x86_64-pc-windows-msvc]=win32-x64
+            [aarch64-pc-windows-msvc]=win32-arm64
+            [x86_64-apple-darwin]=darwin-x64
+            [aarch64-apple-darwin]=darwin-arm64
+            [x86_64-unknown-linux-gnu]=linux-x64-gnu
+            [x86_64-unknown-linux-musl]=linux-x64-musl
+            [aarch64-unknown-linux-gnu]=linux-arm64-gnu
+            [aarch64-unknown-linux-musl]=linux-arm64-musl
+          )
+          for target in "${!PKG[@]}"; do
+            pkg="${PKG[$target]}"
+            src="binaries/delim-doctor-${target}"
+            [ -f "${src}.exe" ] && src="${src}.exe"
+            if [ ! -f "$src" ]; then
+              echo "Missing binary for $target"
+              exit 1
+            fi
+            bin="delim-doctor"
+            [[ "$src" == *.exe ]] && bin="delim-doctor.exe"
+            mkdir -p "npm/platforms/${pkg}/bin"
+            cp "$src" "npm/platforms/${pkg}/bin/${bin}"
+          done
 
       - name: Sync versions from Cargo.toml
         run: node scripts/sync-version.mjs
