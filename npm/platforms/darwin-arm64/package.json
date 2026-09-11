@@ -2,6 +2,7 @@
   "name": "@rcoplolabs/darwin-arm64",
   "version": "0.1.0",
   "description": "delim-doctor binary for macOS arm64.",
+  "license": "MIT",
   "os": [
     "darwin"
   ],

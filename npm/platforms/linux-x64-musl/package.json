@@ -2,6 +2,7 @@
   "name": "@rcoplolabs/linux-x64-musl",
   "version": "0.1.0",
   "description": "delim-doctor binary for Linux x64 (musl).",
+  "license": "MIT",
   "os": [
     "linux"
   ],

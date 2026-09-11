@@ -2,6 +2,7 @@
   "name": "delim-doctor",
   "version": "0.1.0",
   "description": "MCP server that scans source files for bracket/delimiter imbalance, pinpointing line:col.",
+  "license": "MIT",
   "bin": {
     "delim-doctor": "bin/cli.js"
   },

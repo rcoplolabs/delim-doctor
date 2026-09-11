@@ -2,6 +2,7 @@
   "name": "@rcoplolabs/linux-arm64-gnu",
   "version": "0.1.0",
   "description": "delim-doctor binary for Linux arm64 (glibc).",
+  "license": "MIT",
   "os": [
     "linux"
   ],

@@ -2,6 +2,7 @@
   "name": "@rcoplolabs/win32-arm64",
   "version": "0.1.0",
   "description": "delim-doctor binary for win32 arm64.",
+  "license": "MIT",
   "os": [
     "win32"
   ],
