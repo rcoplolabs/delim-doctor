@@ -166,4 +166,4 @@ Test coverage includes stack logic (closing on an empty stack, mismatch, nesting
 
 ## License
 
-No license file is currently included. Add a `LICENSE` file to specify the terms.
+MIT License. See [LICENSE](LICENSE).
