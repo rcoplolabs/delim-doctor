@@ -1,6 +1,6 @@
 {
-  "name": "@rcoplolabs/linux-x64-gnu",
-  "version": "0.1.0",
+  "name": "@rcoplolabs/delim-doctor-linux-x64-gnu",
+  "version": "0.1.1",
   "description": "delim-doctor binary for Linux x64 (glibc).",
   "license": "MIT",
   "os": [

@@ -1,6 +1,6 @@
 # delim-doctor (npm)
 
-npm distribution shim for the Rust `delim-doctor` binary. This package ships no binary, only `bin/cli.js`: it locates the platform package for the current platform (`@rcoplolabs/<platform>`) and forwards stdio to it unchanged.
+npm distribution shim for the Rust `delim-doctor` binary. This package ships no binary, only `bin/cli.js`: it locates the platform package for the current platform (`@rcoplolabs/delim-doctor-<platform>`) and forwards stdio to it unchanged.
 
 Platform packages are installed through `optionalDependencies`; npm fetches only the one matching the current `os`/`cpu`/`libc`, with zero `postinstall`.
 

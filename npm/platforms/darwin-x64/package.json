@@ -1,6 +1,6 @@
 {
-  "name": "@rcoplolabs/darwin-x64",
-  "version": "0.1.0",
+  "name": "@rcoplolabs/delim-doctor-darwin-x64",
+  "version": "0.1.1",
   "description": "delim-doctor binary for macOS x64.",
   "license": "MIT",
   "os": [

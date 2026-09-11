@@ -29,7 +29,7 @@ const platformDirs = readdirSync(platformsDir).filter((name) => {
 });
 
 for (const name of platformDirs) {
-  publish(path.join(platformsDir, name), `@rcoplolabs/${name}`);
+  publish(path.join(platformsDir, name), `@rcoplolabs/delim-doctor-${name}`);
 }
 
 publish(mainPkgDir, "delim-doctor");

@@ -1,6 +1,6 @@
 {
-  "name": "@rcoplolabs/win32-x64",
-  "version": "0.1.0",
+  "name": "@rcoplolabs/delim-doctor-win32-x64",
+  "version": "0.1.1",
   "description": "delim-doctor binary for win32 x64.",
   "license": "MIT",
   "os": [
