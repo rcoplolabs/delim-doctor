@@ -185,7 +185,7 @@ jobs:
   # ── GitHub Release: auto-generated notes + binary downloads ───────────────
   github-release:
     name: GitHub Release
-    needs: build
+    needs: [build, resolve-tag]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -219,7 +219,7 @@ jobs:
   # ── npm publish: platform packages + main package ─────────────────────────
   publish:
     name: npm publish
-    needs: build
+    needs: [build, resolve-tag]
     runs-on: ubuntu-latest
     permissions:
       contents: read
