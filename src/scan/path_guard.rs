@@ -92,13 +92,12 @@ fn has_allowed_extension(path: &Path) -> bool {
 }
 
 fn is_device_file(path: &Path) -> bool {
-    let stem = match path.file_stem() {
-        Some(s) => s.to_string_lossy().to_uppercase(),
-        None => return false,
-    };
-
     #[cfg(target_os = "windows")]
     {
+        let stem = match path.file_stem() {
+            Some(s) => s.to_string_lossy().to_uppercase(),
+            None => return false,
+        };
         matches!(
             stem.as_str(),
             "NUL"
