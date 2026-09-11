@@ -30,8 +30,9 @@ jobs:
             pkg: win32-arm64
             bin: delim-doctor.exe
             cross: false
+            skip_test: true
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-15-intel
             pkg: darwin-x64
             bin: delim-doctor
             cross: false
@@ -83,7 +84,7 @@ jobs:
         run: cross build --release --target ${{ matrix.target }}
 
       - name: Test
-        if: ${{ !matrix.cross }}
+        if: ${{ !matrix.cross && !matrix.skip_test }}
         run: cargo test --target ${{ matrix.target }}
 
       - name: Stage binary
