@@ -94,12 +94,60 @@ jobs:
           cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" \
              "npm/platforms/${{ matrix.pkg }}/bin/${{ matrix.bin }}"
 
+      - name: Stage raw binary for GitHub Release
+        shell: bash
+        run: |
+          mkdir -p release
+          BIN="delim-doctor-${{ matrix.target }}"
+          if [[ "${{ matrix.bin }}" == *.exe ]]; then BIN="${BIN}.exe"; fi
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "release/${BIN}"
+
       - name: Upload platform package
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.pkg }}
           path: npm/platforms/${{ matrix.pkg }}
           if-no-files-found: error
+
+      - name: Upload raw binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: binary-${{ matrix.target }}
+          path: release/delim-doctor-*
+
+  github-release:
+    name: Create GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: binary-*
+          path: binaries
+          merge-multiple: true
+
+      - name: List binaries
+        run: ls -la binaries/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — uploading assets"
+            gh release upload "$TAG" binaries/* --clobber
+          else
+            echo "Creating release $TAG"
+            gh release create "$TAG" \
+              --generate-notes \
+              --title "$TAG" \
+              binaries/*
+          fi
 
   publish:
     name: publish
