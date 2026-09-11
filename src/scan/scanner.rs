@@ -18,6 +18,16 @@ fn matching_close(open: char) -> Option<char> {
     }
 }
 
+/// Map a delimiter char to an index 0–2 for the per-type counter.
+fn delim_index(ch: char) -> Option<usize> {
+    match ch {
+        '(' | ')' => Some(0),
+        '[' | ']' => Some(1),
+        '{' | '}' => Some(2),
+        _ => None,
+    }
+}
+
 fn scan_inner<'a>(
     lexer: &mut dyn Lexer<'a>,
     lines: &[&str],
@@ -25,10 +35,14 @@ fn scan_inner<'a>(
 ) -> Vec<DelimProblem> {
     let mut stack: Vec<OpenDelim> = Vec::new();
     let mut problems: Vec<DelimProblem> = Vec::new();
+    let mut counts: [usize; 3] = [0, 0, 0];
 
     while let Some(ev) = lexer.next_delim() {
         if matches!(ev.ch, '(' | '[' | '{') {
             let depth_at = stack.len() + 1;
+            if let Some(i) = delim_index(ev.ch) {
+                counts[i] += 1;
+            }
             stack.push(OpenDelim {
                 ch: ev.ch,
                 line: ev.line,
@@ -44,6 +58,7 @@ fn scan_inner<'a>(
                 ev.byte_offset,
                 &mut stack,
                 &mut problems,
+                &mut counts,
             );
         }
     }
@@ -82,6 +97,7 @@ fn process_close(
     byte_offset: usize,
     stack: &mut Vec<OpenDelim>,
     problems: &mut Vec<DelimProblem>,
+    counts: &mut [usize; 3],
 ) {
     if stack.is_empty() {
         problems.push(DelimProblem {
@@ -99,7 +115,28 @@ fn process_close(
     }
 
     if matching_close(stack.last().unwrap().ch) == Some(close_ch) {
-        stack.pop();
+        let open = stack.pop().unwrap();
+        if let Some(i) = delim_index(open.ch) {
+            counts[i] -= 1;
+        }
+        return;
+    }
+
+    // O(1) fast path: if no matching open type exists anywhere on the stack,
+    // report unexpected close without scanning the entire stack.
+    let ci = delim_index(close_ch).unwrap();
+    if counts[ci] == 0 {
+        problems.push(DelimProblem {
+            kind: ProblemKind::UnexpectedClose,
+            ch: close_ch,
+            line,
+            col,
+            byte_offset,
+            expected: Some(close_ch),
+            snippet: String::new(),
+            depth_at: stack.len(),
+            at_eof: false,
+        });
         return;
     }
 
@@ -111,6 +148,9 @@ fn process_close(
         Some(idx) => {
             while stack.len() > idx + 1 {
                 let open = stack.pop().unwrap();
+                if let Some(i) = delim_index(open.ch) {
+                    counts[i] -= 1;
+                }
                 problems.push(DelimProblem {
                     kind: ProblemKind::MissingClose,
                     ch: open.ch,
@@ -123,7 +163,10 @@ fn process_close(
                     at_eof: false,
                 });
             }
-            stack.pop();
+            let open = stack.pop().unwrap();
+            if let Some(i) = delim_index(open.ch) {
+                counts[i] -= 1;
+            }
         }
         None => {
             problems.push(DelimProblem {
@@ -415,5 +458,17 @@ mod tests {
         assert_eq!(problems[0].kind, ProblemKind::MissingClose);
         assert_eq!(problems[0].ch, '{');
         assert_eq!(problems[0].line, 1);
+    }
+
+    #[test]
+    fn test_many_unmatched_opens_no_quadratic() {
+        // Each line pushes { [ but ) never matches any open on the stack.
+        // Before the fix this was O(n²) due to rposition scanning the full
+        // stack on every non-matching close.
+        let line = "fn foo() { let x = [1, 2, 3); bar(x); \n";
+        let src = line.repeat(10_000);
+        let problems = scan_src(&src);
+        // 1 UnexpectedClose per line + 2 MissingClose per line at EOF.
+        assert_eq!(problems.len(), 30_000);
     }
 }
