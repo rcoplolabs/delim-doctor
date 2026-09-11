@@ -1,20 +1,78 @@
 name: Release
 
+# Combined workflow: auto-tag + build + GitHub Release + npm publish
+#
+# Triggers:
+#   1. Push to main → auto-tag detects Cargo.toml version → creates tag
+#      → build → GitHub Release → npm publish (all in one run)
+#   2. Manual tag push (v*) → skip auto-tag → build → release → publish
+#   3. workflow_dispatch → build only (for testing, no release/publish)
+#
+# NOTE: GitHub Actions does NOT trigger workflows from tags pushed by
+# GITHUB_TOKEN. Combining auto-tag + release into one workflow avoids
+# this limitation entirely.
+
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main, master]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # ── Auto-tag: on branch push, create tag if version changed ──────────────
+  auto-tag:
+    name: Auto-tag
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from Cargo.toml
+        id: version
+        run: |
+          VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          if [ -z "$VERSION" ]; then
+            echo "Could not extract version from Cargo.toml"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check if tag already exists
+        id: check
+        run: |
+          if git rev-parse "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "Tag ${{ steps.version.outputs.tag }} already exists — skipping release"
+          else
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push tag
+        if: steps.check.outputs.should_release == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.version }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+  # ── Build: runs if auto-tag created a tag, or on manual tag push ──────────
   build:
     name: build ${{ matrix.pkg }}
+    needs: auto-tag
+    if: always() && (needs.auto-tag.result == 'skipped' || needs.auto-tag.outputs.should_release == 'true')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -115,14 +173,24 @@ jobs:
           name: binary-${{ matrix.target }}
           path: release/delim-doctor-*
 
+  # ── GitHub Release: auto-generated notes + binary downloads ───────────────
   github-release:
-    name: Create GitHub Release
+    name: GitHub Release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: always() && needs.build.result == 'success' && (needs.auto-tag.outputs.should_release == 'true' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - name: Determine tag
+        id: tag
+        run: |
+          TAG="${{ needs.auto-tag.outputs.tag }}"
+          if [ -z "$TAG" ] || [ "$TAG" = "" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
       - name: Download all binary artifacts
         uses: actions/download-artifact@v8
         with:
@@ -137,7 +205,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${{ steps.tag.outputs.tag }}"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists — uploading assets"
             gh release upload "$TAG" binaries/* --clobber
@@ -149,16 +217,26 @@ jobs:
               binaries/*
           fi
 
+  # ── npm publish: platform packages + main package ─────────────────────────
   publish:
-    name: publish
+    name: npm publish
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: always() && needs.build.result == 'success' && (needs.auto-tag.outputs.should_release == 'true' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v7
+
+      - name: Determine tag
+        id: tag
+        run: |
+          TAG="${{ needs.auto-tag.outputs.tag }}"
+          if [ -z "$TAG" ] || [ "$TAG" = "" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v7
         with:
@@ -183,9 +261,10 @@ jobs:
         shell: bash
         run: |
           version=$(node -p "require('./npm/delim-doctor/package.json').version")
-          tag="${GITHUB_REF_NAME#v}"
+          TAG="${{ steps.tag.outputs.tag }}"
+          tag="${TAG#v}"
           if [ "$version" != "$tag" ]; then
-            echo "tag $GITHUB_REF_NAME does not match package version $version"
+            echo "tag $TAG does not match package version $version"
             exit 1
           fi
 
