@@ -10,6 +10,13 @@ use server::DelimDoctorServer;
 
 fn parse_workspace_root() -> anyhow::Result<PathBuf> {
     let args: Vec<String> = std::env::args().collect();
+
+    // --version takes priority over all other arguments.
+    if args.iter().any(|a| a == "--version") {
+        println!("delim-doctor {}", env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
+    }
+
     let mut workspace_root: Option<PathBuf> = None;
 
     let mut i = 1;
@@ -21,10 +28,6 @@ fn parse_workspace_root() -> anyhow::Result<PathBuf> {
                     anyhow::bail!("--workspace-root requires a value");
                 }
                 workspace_root = Some(PathBuf::from(&args[i]));
-            }
-            "--version" => {
-                println!("delim-doctor {}", env!("CARGO_PKG_VERSION"));
-                std::process::exit(0);
             }
             other => {
                 anyhow::bail!("unknown argument: {}", other);

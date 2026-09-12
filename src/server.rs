@@ -126,6 +126,10 @@ fn scan_error_to_error_data(e: ScanError) -> ErrorData {
 }
 
 fn report_to_result(report: &impl serde::Serialize, summary: String) -> CallToolResult {
+    // unwrap_or_default is safe here: the report types contain only basic
+    // serializable types (String, usize, bool, char, Option<char>) that
+    // cannot fail to serialize. If a future field type breaks this
+    // invariant, the empty fallback prevents a server-wide panic.
     let json_str = serde_json::to_string_pretty(report).unwrap_or_default();
     let json_value = serde_json::to_value(report).unwrap_or_default();
 

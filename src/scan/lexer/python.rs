@@ -2,20 +2,26 @@ use super::{BaseLexer, Lexer};
 
 pub struct PythonLexer<'a> {
     base: BaseLexer<'a>,
+    /// Tracks whether the string prefix just consumed was raw (`r`, `rb`,
+    /// `br`, `rf`, `fr`). Set by `try_handle_prefix`, consumed by
+    /// `handle_single_quote`/`handle_double_quote`.
+    last_prefix_raw: bool,
 }
 
 impl<'a> PythonLexer<'a> {
     pub fn new(src: &'a str) -> Self {
         Self {
             base: BaseLexer::new(src),
+            last_prefix_raw: false,
         }
     }
 
-    fn skip_triple(&mut self, quote: char) {
+    fn skip_triple(&mut self, quote: char, raw: bool) {
         let mut consecutive = 0u32;
         while let Some((_, c)) = self.base.consume_char() {
-            if c == '\\' {
+            if !raw && c == '\\' {
                 self.base.consume_char();
+                consecutive = 0;
             } else if c == quote {
                 consecutive += 1;
                 if consecutive == 3 {
@@ -34,28 +40,44 @@ impl<'a> Lexer<'a> for PythonLexer<'a> {
     }
 
     fn handle_single_quote(&mut self) {
+        let raw = self.last_prefix_raw;
+        self.last_prefix_raw = false;
         match self.base.peek_char() {
             Some('\'') => {
                 self.base.consume_char();
                 if let Some('\'') = self.base.peek_char() {
                     self.base.consume_char();
-                    self.skip_triple('\'');
+                    self.skip_triple('\'', raw);
                 }
             }
-            _ => self.base.skip_string('\''),
+            _ => {
+                if raw {
+                    self.base.skip_raw_simple('\'');
+                } else {
+                    self.base.skip_string('\'');
+                }
+            }
         }
     }
 
     fn handle_double_quote(&mut self) {
+        let raw = self.last_prefix_raw;
+        self.last_prefix_raw = false;
         match self.base.peek_char() {
             Some('"') => {
                 self.base.consume_char();
                 if let Some('"') = self.base.peek_char() {
                     self.base.consume_char();
-                    self.skip_triple('"');
+                    self.skip_triple('"', raw);
                 }
             }
-            _ => self.base.skip_string('"'),
+            _ => {
+                if raw {
+                    self.base.skip_raw_simple('"');
+                } else {
+                    self.base.skip_string('"');
+                }
+            }
         }
     }
 
@@ -64,14 +86,25 @@ impl<'a> Lexer<'a> for PythonLexer<'a> {
         if !matches!(cl, 'r' | 'b' | 'f' | 'u') {
             return false;
         }
+        let is_raw = cl == 'r';
         match self.base.peek_char() {
-            Some(q) if q == '\'' || q == '"' => true,
+            Some(q) if q == '\'' || q == '"' => {
+                self.last_prefix_raw = is_raw;
+                true
+            }
             Some(n) => {
                 let nl = n.to_ascii_lowercase();
                 let valid = matches!((cl, nl), ('r', 'b') | ('b', 'r') | ('f', 'r') | ('r', 'f'));
                 if valid {
                     self.base.consume_char();
-                    matches!(self.base.peek_char(), Some(q) if q == '\'' || q == '"')
+                    let raw = is_raw || nl == 'r';
+                    match self.base.peek_char() {
+                        Some(q) if q == '\'' || q == '"' => {
+                            self.last_prefix_raw = raw;
+                            true
+                        }
+                        _ => false,
+                    }
                 } else {
                     false
                 }
@@ -198,5 +231,77 @@ mod tests {
     fn test_triple_quote_escaped_backslash() {
         let src = r#"x = """a \\\nb""""#;
         assert!(collect_delims(src).is_empty());
+    }
+
+    // --- Raw triple-quoted string tests ---
+
+    #[test]
+    fn test_raw_triple_double_quote() {
+        // In raw strings, \ is literal, so \""" should close the string.
+        let src = "x = r\"\"\"hello\\\"\"\"";
+        assert!(
+            collect_delims(src).is_empty(),
+            "raw triple string should close at \\\"\"\""
+        );
+    }
+
+    #[test]
+    fn test_raw_triple_single_quote() {
+        let src = "x = r'''hello\\'''";
+        assert!(
+            collect_delims(src).is_empty(),
+            "raw triple single should close at \\'''"
+        );
+    }
+
+    #[test]
+    fn test_raw_triple_quote_backslash_literal() {
+        // Backslash before quotes in raw mode is literal — string closes at """.
+        let src = "x = r\"\"\"a\\nb\\\"\"\"";
+        assert!(
+            collect_delims(src).is_empty(),
+            "got: {:?}",
+            collect_delims(src)
+        );
+    }
+
+    #[test]
+    fn test_raw_regular_string_backslash_quote() {
+        // In a raw regular string r"...\", the " after \ is the closing quote.
+        let src = "r\"hello\\\" world()";
+        let delims = collect_delims(src);
+        assert_eq!(delims.len(), 2);
+        assert_eq!(delims[0].ch, '(');
+        assert_eq!(delims[1].ch, ')');
+    }
+
+    #[test]
+    fn test_rb_triple_quote_raw() {
+        // rb prefix: raw + bytes, should treat \ as literal in triple.
+        let src = "x = rb\"\"\"hello\\\"\"\"";
+        assert!(
+            collect_delims(src).is_empty(),
+            "rb triple should close at \\\"\"\""
+        );
+    }
+
+    #[test]
+    fn test_rf_triple_quote_raw() {
+        // rf prefix: raw + f-string, should treat \ as literal in triple.
+        let src = "x = rf\"\"\"hello\\\"\"\"";
+        assert!(
+            collect_delims(src).is_empty(),
+            "rf triple should close at \\\"\"\""
+        );
+    }
+
+    #[test]
+    fn test_non_raw_triple_still_handles_escapes() {
+        // Non-raw triple: \ before """ should escape the first quote.
+        let src = r#"x = """hello\"""world""""#;
+        assert!(
+            collect_delims(src).is_empty(),
+            "non-raw triple should handle escapes"
+        );
     }
 }

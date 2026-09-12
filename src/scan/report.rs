@@ -190,6 +190,10 @@ pub fn generate_snippet(
     if lines.is_empty() {
         return String::new();
     }
+    // When the file has fewer lines than context_lines would suggest
+    // (e.g. a single-line file), start/end are clamped to [1, lines.len()],
+    // so fewer than 2*context_lines+1 lines are shown. This is intentional —
+    // we only show lines that exist.
     let start = problem_line.saturating_sub(context_lines).max(1);
     let end = (problem_line + context_lines).min(lines.len());
 

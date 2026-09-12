@@ -131,3 +131,114 @@ fn is_device_file(path: &Path) -> bool {
         path_str.starts_with("/dev/")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn make_workspace() -> PathBuf {
+        let dir = std::env::temp_dir().join("delim_doctor_path_guard_test");
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn make_file(workspace: &std::path::Path, name: &str, content: &str) -> PathBuf {
+        let path = workspace.join(name);
+        fs::write(&path, content).unwrap();
+        path
+    }
+
+    fn cleanup(path: &std::path::Path) {
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn test_null_bytes_rejected() {
+        let ws = make_workspace();
+        let result = validate_path("file\0.rs", &ws);
+        assert!(matches!(result, Err(PathError::NullBytes)));
+    }
+
+    #[test]
+    fn test_bad_extension_rejected() {
+        let ws = make_workspace();
+        let file = make_file(&ws, "bad.txt", "content");
+        let result = validate_path(file.to_str().unwrap(), &ws);
+        assert!(matches!(result, Err(PathError::BadExtension(_))));
+        cleanup(&file);
+    }
+
+    #[test]
+    fn test_directory_rejected() {
+        let ws = make_workspace();
+        let dir = ws.join("dir.rs");
+        fs::create_dir_all(&dir).unwrap();
+        let result = validate_path(dir.to_str().unwrap(), &ws);
+        assert!(matches!(result, Err(PathError::IsDirectory)));
+        fs::remove_dir(&dir).ok();
+    }
+
+    #[test]
+    fn test_outside_workspace_rejected() {
+        let ws = make_workspace();
+        let outside = std::env::temp_dir().join("delim_doctor_outside_guard.rs");
+        fs::write(&outside, "fn main() {}").unwrap();
+        let result = validate_path(outside.to_str().unwrap(), &ws);
+        assert!(matches!(result, Err(PathError::OutsideWorkspace)));
+        fs::remove_file(&outside).ok();
+    }
+
+    #[test]
+    fn test_file_too_large_rejected() {
+        let ws = make_workspace();
+        let path = ws.join("large.rs");
+        let large = vec![b' '; (MAX_FILE_SIZE + 1) as usize];
+        fs::write(&path, &large).unwrap();
+        let result = validate_path(path.to_str().unwrap(), &ws);
+        assert!(matches!(result, Err(PathError::FileTooLarge(_))));
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_valid_file_accepted() {
+        let ws = make_workspace();
+        let file = make_file(&ws, "ok.rs", "fn main() {}\n");
+        let result = validate_path(file.to_str().unwrap(), &ws);
+        assert!(result.is_ok());
+        cleanup(&file);
+    }
+
+    #[test]
+    fn test_relative_path_resolved() {
+        let ws = make_workspace();
+        let file = make_file(&ws, "rel.rs", "x = 1\n");
+        let result = validate_path("rel.rs", &ws);
+        assert!(result.is_ok());
+        cleanup(&file);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_windows_device_file_rejected() {
+        let ws = make_workspace();
+        let result = validate_path("NUL.rs", &ws);
+        assert!(matches!(result, Err(PathError::DeviceFile)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_symlink_escape_rejected() {
+        use std::os::unix::fs::symlink;
+        let ws = make_workspace();
+        let outside = std::env::temp_dir().join("delim_doctor_symlink_target.rs");
+        fs::write(&outside, "fn main() {}").unwrap();
+        let link = ws.join("link.rs");
+        symlink(&outside, &link).unwrap();
+        let result = validate_path(link.to_str().unwrap(), &ws);
+        assert!(matches!(result, Err(PathError::OutsideWorkspace)));
+        fs::remove_file(&outside).ok();
+        fs::remove_file(&link).ok();
+    }
+}

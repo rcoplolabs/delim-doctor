@@ -112,6 +112,24 @@ impl<'a> RustLexer<'a> {
                         return;
                     }
                 }
+                '"' => self.base.skip_string('"'),
+                '\'' => self.skip_lifetime_or_char(),
+                '/' if self.base.peek_char() == Some('*') => {
+                    self.base.consume_char();
+                    self.skip_nested_block_comment();
+                }
+                '/' if self.base.peek_char() == Some('/') => {
+                    self.base.consume_char();
+                    self.base.skip_line_comment();
+                }
+                // Handle raw/byte string prefixes so `]` inside them is
+                // not mistaken for the attribute's closing bracket.
+                'r' if matches!(self.base.peek_char(), Some('"') | Some('#')) => {
+                    self.handle_r_prefix();
+                }
+                'b' if matches!(self.base.peek_char(), Some('"') | Some('\'') | Some('r')) => {
+                    self.handle_b_prefix();
+                }
                 _ => {}
             }
         }
@@ -309,5 +327,73 @@ mod tests {
         let src = "#[foo(bar[1])]\nfn main() {}\n";
         let delims = collect_delims(src);
         assert_eq!(delims.len(), 4, "nested attribute brackets skipped");
+    }
+
+    #[test]
+    fn test_attribute_close_bracket_in_string() {
+        // ] inside a string inside an attribute must not terminate the attribute.
+        let src = "#[cfg(feature = \"x]\")]\nfn main() {}\n";
+        let delims = collect_delims(src);
+        assert_eq!(
+            delims.len(),
+            4,
+            "attribute with ] in string should skip the whole attribute"
+        );
+    }
+
+    #[test]
+    fn test_attribute_brackets_in_doc_string() {
+        // Markdown-style [link] inside a doc string must not affect depth.
+        let src = "#[doc = \"see [link](url)\"]\nfn foo() {}\n";
+        let delims = collect_delims(src);
+        assert_eq!(delims.len(), 4, "doc string brackets must not leak");
+    }
+
+    #[test]
+    fn test_attribute_close_bracket_in_block_comment() {
+        // ] inside a block comment inside an attribute must not terminate it.
+        let src = "#[foo /* ] */]\nfn main() {}\n";
+        let delims = collect_delims(src);
+        assert_eq!(
+            delims.len(),
+            4,
+            "attribute with ] in block comment should not produce false positive"
+        );
+    }
+
+    #[test]
+    fn test_attribute_close_bracket_in_char_literal() {
+        // ] inside a char literal inside an attribute must not terminate it.
+        let src = "#[foo(']')]\nfn main() {}\n";
+        let delims = collect_delims(src);
+        assert_eq!(
+            delims.len(),
+            4,
+            "attribute with ] in char literal should not produce false positive"
+        );
+    }
+
+    #[test]
+    fn test_attribute_close_bracket_in_raw_string() {
+        // ] inside a raw string inside an attribute must not terminate it.
+        let src = "#[doc = r#\"see link]\"#]\nfn foo() {}\n";
+        let delims = collect_delims(src);
+        assert_eq!(
+            delims.len(),
+            4,
+            "attribute with ] in raw string should not produce false positive"
+        );
+    }
+
+    #[test]
+    fn test_attribute_line_comment_with_close_bracket() {
+        // ] inside a line comment inside an attribute (multi-line attribute).
+        let src = "#[foo // ]\nbar()]\nfn main() {}\n";
+        let delims = collect_delims(src);
+        assert_eq!(
+            delims.len(),
+            4,
+            "attribute with ] in line comment should not produce false positive"
+        );
     }
 }

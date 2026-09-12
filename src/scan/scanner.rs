@@ -124,7 +124,7 @@ fn process_close(
 
     // O(1) fast path: if no matching open type exists anywhere on the stack,
     // report unexpected close without scanning the entire stack.
-    let ci = delim_index(close_ch).unwrap();
+    let ci = delim_index(close_ch).expect("close_ch is always a closing delimiter");
     if counts[ci] == 0 {
         problems.push(DelimProblem {
             kind: ProblemKind::UnexpectedClose,
@@ -169,6 +169,10 @@ fn process_close(
             }
         }
         None => {
+            // Safety net: counts[ci] > 0 guarantees at least one matching open
+            // on the stack, so rposition should always find a match. This arm
+            // is kept as a defensive fallback in case the invariant is ever
+            // broken by a future change.
             problems.push(DelimProblem {
                 kind: ProblemKind::UnexpectedClose,
                 ch: close_ch,

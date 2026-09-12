@@ -10,6 +10,7 @@ use rust::RustLexer;
 use std::iter::Peekable;
 use std::str::CharIndices;
 
+#[derive(Debug)]
 pub struct DelimEvent {
     pub ch: char,
     pub line: usize,
@@ -101,6 +102,16 @@ impl<'a> BaseLexer<'a> {
                 }
             } else if c == '"' && hash_count == 0 {
                 return;
+            }
+        }
+    }
+
+    /// Skip a simple (non-escaped) string until the matching quote.
+    /// Used for raw strings where backslash is a literal character.
+    pub fn skip_raw_simple(&mut self, quote: char) {
+        while let Some((_, c)) = self.consume_char() {
+            if c == quote {
+                break;
             }
         }
     }

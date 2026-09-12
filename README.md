@@ -79,13 +79,13 @@ Add to the `mcp` section of `opencode.json`:
 
 Scans a file and reports all delimiter imbalance points.
 
-| Parameter | Required | Description |
-|---|---|---|
-| `path` | yes | File path, absolute or relative to `--workspace-root` |
-| `language` | no | `rust`, `python`, `javascript`/`js`, `typescript`/`ts`, or `generic`; defaults to extension-based detection |
-| `max_problems` | no | Maximum number of problems to return, default 20 |
-| `context_lines` | no | Context lines around each problem, default 1 |
-| `cursor` | no | `next_cursor` from a previous response, for pagination |
+| Parameter       | Required | Description                                                                                                 |
+| --------------- | -------- | ----------------------------------------------------------------------------------------------------------- |
+| `path`          | yes      | File path, absolute or relative to `--workspace-root`                                                       |
+| `language`      | no       | `rust`, `python`, `javascript`/`js`, `typescript`/`ts`, or `generic`; defaults to extension-based detection |
+| `max_problems`  | no       | Maximum number of problems to return, default 20                                                            |
+| `context_lines` | no       | Context lines around each problem, default 1                                                                |
+| `cursor`        | no       | `next_cursor` from a previous response, for pagination                                                      |
 
 Returns a two-block `CallToolResult`: a JSON content block (stable schema) plus a short text summary, also exposed as `structuredContent`.
 
@@ -123,11 +123,11 @@ JSON structure:
 
 Applies **conservative** fixes. Defaults to `dry_run`, reporting only and never touching the file.
 
-| Parameter | Required | Description |
-|---|---|---|
-| `path` | yes | File path |
-| `language` | no | Same as `delim_scan` |
-| `dry_run` | no | Default `true`, report only; set to `false` to write the file |
+| Parameter  | Required | Description                                                   |
+| ---------- | -------- | ------------------------------------------------------------- |
+| `path`     | yes      | File path                                                     |
+| `language` | no       | Same as `delim_scan`                                          |
+| `dry_run`  | no       | Default `true`, report only; set to `false` to write the file |
 
 Only two categories of unambiguous problems are fixed automatically:
 
@@ -156,15 +156,15 @@ Return structure:
 
 Each named language is a thin lexer layered **on top of `generic`**: it only overrides what differs, and everything else falls back to the generic rules. This keeps every lexer small and predictable.
 
-| `language` | Extensions | Generic base | Overrides | Known limits |
-|---|---|---|---|---|
-| `rust` | `.rs` | yes | Nested block comments; raw strings `r".."` `r#".."#`; byte strings `b".."`/`b'..'`/`br#..`; lifetimes `'a` vs char literals | |
-| `python` | `.py`, `.pyw` | yes | Triple-quoted strings `""".."""` / `'''..'''`; prefixes `r`/`b`/`f`/`u` and combos (`rb`, `br`, `fr`, `rf`) | `${}`-style f-string inner expressions are skipped as string content |
-| `javascript` / `js` | `.js`, `.mjs`, `.cjs`, `.jsx` | yes | Template literals (`` `…` ``) skipped as opaque strings | `${}` expression bodies and regex literals are not distinguished; brackets inside them are reported (regex) or missed (template expr) |
-| `typescript` / `ts` | `.ts`, `.mts`, `.cts`, `.tsx` | yes | Same as `javascript` | Same as `javascript` |
-| `generic` (default) | anything else | — | — | |
+| `language`          | Extensions                    | Generic base | Overrides                                                                                                                   | Known limits                                                                                                                          |
+| ------------------- | ----------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `rust`              | `.rs`                         | yes          | Nested block comments; raw strings `r".."` `r#".."#`; byte strings `b".."`/`b'..'`/`br#..`; lifetimes `'a` vs char literals |                                                                                                                                       |
+| `python`            | `.py`, `.pyw`                 | yes          | Triple-quoted strings `""".."""` / `'''..'''`; prefixes `r`/`b`/`f`/`u` and combos (`rb`, `br`, `fr`, `rf`)                 | `${}`-style f-string inner expressions are skipped as string content                                                                  |
+| `javascript` / `js` | `.js`, `.mjs`, `.cjs`, `.jsx` | yes          | Template literals (`` `…` ``) skipped as opaque strings; `#` not treated as comment (private class fields)                  | `${}` expression bodies and regex literals are not distinguished; brackets inside them are reported (regex) or missed (template expr) |
+| `typescript` / `ts` | `.ts`, `.mts`, `.cts`, `.tsx` | yes          | Same as `javascript`                                                                                                        | Same as `javascript`                                                                                                                  |
+| `generic` (default) | anything else                 | —            | —                                                                                                                           |                                                                                                                                       |
 
-`generic` base rules: `//` and `/* */` block comments, `#` line comments, and single- `"..."` / double-quoted `'...'` strings with backslash escapes. Delimiters inside all of these are ignored.
+`generic` base rules: `//` and `/* */` block comments, `#` line comments, and single- `"..."` / double-quoted `'...'` strings with backslash escapes. Delimiters inside all of these are ignored. The `#` line comment rule applies to `generic` and `python`; `javascript`/`typescript` override it so `#` is treated as a regular character (for private class fields).
 
 Unknown extensions fall back to `generic` without error. An unrecognized `language` value returns `invalid_params`.
 
@@ -198,7 +198,7 @@ The scanner is a small dependency chain: `server` -> `scan` (the deep module tha
 
 ### Conventions
 
-- **Conservative lexing**: when in doubt, skip more rather than less. A string/comment swallowing a delimiter produces a *missed* problem (false negative), which is acceptable; inventing delimiters produces false positives, which is not.
+- **Conservative lexing**: when in doubt, skip more rather than less. A string/comment swallowing a delimiter produces a _missed_ problem (false negative), which is acceptable; inventing delimiters produces false positives, which is not.
 - If a syntax element is ambiguous without a full parser (e.g. regex literals vs division), keep the generic behavior and document it as a known limit rather than guessing.
 
 ## Security
@@ -221,7 +221,7 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-Test coverage includes stack logic (closing on an empty stack, mismatch, nesting, stacked errors, UTF-8 columns), the rust/python/javascript lexers, `delim_fix` deletion and EOF insertion, and path safety.
+Test coverage includes stack logic (closing on an empty stack, mismatch, nesting, stacked errors, UTF-8 columns), the rust/python/javascript lexers, `delim_fix` deletion and EOF insertion, path safety, and atomic write with backup.
 
 ## License
 
